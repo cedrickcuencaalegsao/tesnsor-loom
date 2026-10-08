@@ -1,5 +1,11 @@
 import { useState, type FormEvent } from "react";
-import type { ExportFormat, HardwareTarget, LayerConfig } from "./types/type";
+import {
+  DEFAULT_TASK,
+  type ExportFormat,
+  type HardwareTarget,
+  type LayerConfig,
+  type TaskConfig,
+} from "./types/type";
 import { DataSection } from "./components/DataSection";
 import { NetworkSection } from "./components/NetworkSection";
 import {
@@ -21,6 +27,7 @@ export default function App() {
     out_features: 1,
     output_activation: "none",
   });
+  const [task, setTask] = useState<TaskConfig>(DEFAULT_TASK);
   const [params, setParams] = useState<TrainingParams>({
     epochs: 100,
     batch_size: 32,
@@ -35,6 +42,7 @@ export default function App() {
   const [formError, setFormError] = useState("");
 
   const session = useTrainingSession();
+  const isClassification = task.loss === "cross_entropy";
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -54,9 +62,24 @@ export default function App() {
       return;
     }
 
+    if (isClassification) {
+      if (!Number.isInteger(task.classes) || task.classes < 2) {
+        setFormError("Cross-entropy needs at least 2 classes per output (9 for sudoku).");
+        return;
+      }
+      if (!(task.value_scale > 0)) {
+        setFormError("Value scale must be greater than 0 (9 for the sudoku CSV).");
+        return;
+      }
+      if (layers.output_activation !== "none") {
+        setFormError("Cross-entropy needs the output activation set to none.");
+        return;
+      }
+    }
+
     setFormError("");
     void session.start({
-      config: { ...params, layers, hardware },
+      config: { ...params, layers, hardware, task },
       data: csv.trim(),
       exportFormat,
       outputPath: outputPath.trim(),
@@ -87,7 +110,12 @@ export default function App() {
           </div>
 
           <div className="bento-tile bento-d3 lg:col-span-7">
-            <NetworkSection value={layers} onChange={setLayers} />
+            <NetworkSection
+              value={layers}
+              onChange={setLayers}
+              task={task}
+              onTaskChange={setTask}
+            />
           </div>
 
           <div className="bento-tile bento-d4 lg:col-span-6">
@@ -133,6 +161,12 @@ export default function App() {
                   <span className="font-semibold text-primary">{params.batch_size}</span>
                 </span>
                 <span className="flex items-center justify-between gap-2">
+                  <span>Loss</span>
+                  <span className="font-semibold text-primary">
+                    {isClassification ? "cross-entropy" : "mse"}
+                  </span>
+                </span>
+                <span className="flex items-center justify-between gap-2">
                   <span>Device</span>
                   <span className="font-semibold text-primary">
                     {hardware.target_mode}
@@ -164,6 +198,7 @@ export default function App() {
             epochs={session.epochs}
             log={session.log}
             snapshot={session.snapshot}
+            scoreLabel={isClassification ? "Cell accuracy" : "Score"}
           />
         </div>
 
