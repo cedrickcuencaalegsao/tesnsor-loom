@@ -8,6 +8,14 @@ import {
   type ModelSummary,
 } from "../api/model";
 
+// Classification models (softmax + cross-entropy) also report accuracy figures.
+// Declared here so this file works even if api/model.ts has not been updated yet.
+type ScoredEvaluation = Evaluation & {
+  cell_accuracy?: number | null;
+  board_accuracy?: number | null;
+  blank_accuracy?: number | null;
+};
+
 interface Props {
   /** Optional: the export path from the training form, offered as a shortcut. */
   suggestedPath?: string;
@@ -22,16 +30,51 @@ function describeScore(r2: number): string {
   return "Strong. Predictions track the targets closely.";
 }
 
+function describeAccuracy(acc: number, board: number | null | undefined): string {
+  const boardNote =
+    board != null && board < 0.5
+      ? " Whole-board accuracy is low, so use it as a helper (fill the most confident cell, repeat) or pair it with a solver."
+      : "";
+  if (acc < 0.3)
+    return "Weak. Barely better than guessing; it needs more data or training." + boardNote;
+  if (acc < 0.7) return "Decent. It has learned part of the pattern." + boardNote;
+  if (acc < 0.95) return "Good. Most cells are right." + boardNote;
+  return "Strong. Nearly every cell is right." + boardNote;
+}
+
+const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+
+/** Format decoded digits; 81 values are laid out as a 9x9 grid. */
+function formatDigits(values: number[], scale: number): string {
+  const digits = values.map((v) => Math.round(v * scale));
+  if (digits.length === 81) {
+    const rows: string[] = [];
+    for (let r = 0; r < 9; r++) {
+      const row = digits.slice(r * 9, r * 9 + 9);
+      rows.push(
+        [row.slice(0, 3), row.slice(3, 6), row.slice(6, 9)]
+          .map((g) => g.join(" "))
+          .join(" | "),
+      );
+      if (r === 2 || r === 5) rows.push("------+-------+------");
+    }
+    return rows.join("\n");
+  }
+  return digits.join(", ");
+}
+
 export function ModelTester({ suggestedPath }: Props) {
   const [summary, setSummary] = useState<ModelSummary | null>(null);
   const [error, setError] = useState("");
 
   const [inputText, setInputText] = useState("");
   const [prediction, setPrediction] = useState<number[] | null>(null);
+  // Classification models output class / scale; set this to the training "Value scale" (9 for sudoku).
+  const [decodeScale, setDecodeScale] = useState("");
 
   const [evalCsv, setEvalCsv] = useState("");
   const [evalFileName, setEvalFileName] = useState("");
-  const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
+  const [evaluation, setEvaluation] = useState<ScoredEvaluation | null>(null);
   const [busy, setBusy] = useState(false);
   const evalFileRef = useRef<HTMLInputElement>(null);
 
@@ -114,6 +157,10 @@ export function ModelTester({ suggestedPath }: Props) {
       ).join(", ")
     : "";
 
+  const scale = Number(decodeScale);
+  const decode = decodeScale.trim() !== "" && Number.isFinite(scale) && scale > 0;
+  const isClassification = evaluation?.cell_accuracy != null;
+
   return (
     <section className="neo-raised h-full w-full p-6 sm:p-8">
       <header className="mb-6">
@@ -194,10 +241,33 @@ export function ModelTester({ suggestedPath }: Props) {
                 Predict
               </button>
             </div>
-            {prediction && (
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="decode-scale"
+                className="block text-xs font-medium text-secondary"
+              >
+                Show result as whole numbers: multiply by (classification models, e.g. 9)
+              </label>
+              <input
+                id="decode-scale"
+                type="number"
+                min={0}
+                step="any"
+                value={decodeScale}
+                placeholder="off"
+                onChange={(e) => setDecodeScale(e.target.value)}
+                className="neo-field"
+              />
+            </div>
+
+            {prediction && !decode && (
               <p className="neo-chip">
                 Prediction: {prediction.map((v) => v.toFixed(4)).join(", ")}
               </p>
+            )}
+            {prediction && decode && (
+              <pre className="neo-inset neo-log">{formatDigits(prediction, scale)}</pre>
             )}
           </div>
 
@@ -244,22 +314,50 @@ export function ModelTester({ suggestedPath }: Props) {
                         <th>Rows</th>
                         <td>{evaluation.rows}</td>
                       </tr>
-                      <tr>
-                        <th>Mean squared error</th>
-                        <td>{evaluation.mse.toFixed(4)}</td>
-                      </tr>
-                      <tr>
-                        <th>R² score</th>
-                        <td>{evaluation.r2.toFixed(3)}</td>
-                      </tr>
-                      <tr>
-                        <th>Mean target</th>
-                        <td>{evaluation.mean_target.toFixed(4)}</td>
-                      </tr>
+                      {isClassification ? (
+                        <>
+                          {evaluation.blank_accuracy != null && (
+                            <tr>
+                              <th>Blank-cell accuracy</th>
+                              <td>{pct(evaluation.blank_accuracy)}</td>
+                            </tr>
+                          )}
+                          <tr>
+                            <th>Cell accuracy (incl. given clues)</th>
+                            <td>{pct(evaluation.cell_accuracy ?? 0)}</td>
+                          </tr>
+                          <tr>
+                            <th>Full-board accuracy</th>
+                            <td>{pct(evaluation.board_accuracy ?? 0)}</td>
+                          </tr>
+                        </>
+                      ) : (
+                        <>
+                          <tr>
+                            <th>Mean squared error</th>
+                            <td>{evaluation.mse.toFixed(4)}</td>
+                          </tr>
+                          <tr>
+                            <th>R² score</th>
+                            <td>{evaluation.r2.toFixed(3)}</td>
+                          </tr>
+                          <tr>
+                            <th>Mean target</th>
+                            <td>{evaluation.mean_target.toFixed(4)}</td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-sm text-secondary">{describeScore(evaluation.r2)}</p>
+                <p className="text-sm text-secondary">
+                  {isClassification
+                    ? describeAccuracy(
+                        evaluation.blank_accuracy ?? evaluation.cell_accuracy ?? 0,
+                        evaluation.board_accuracy,
+                      )
+                    : describeScore(evaluation.r2)}
+                </p>
               </div>
             )}
           </div>
