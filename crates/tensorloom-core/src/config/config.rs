@@ -26,5 +26,30 @@ pub struct TrainConfig {
     pub batch_size: usize,
     pub lr: f64,
     pub layers: crate::config::LayerConfig, // Structural layers profile
-    pub hardware: HardwareTarget,           // The dynamic configuration payload
+    pub hardware: HardwareTarget,
+    #[serde(default)]
+    pub task: TaskConfig,         // The dynamic configuration payload
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskConfig {
+    /// "mse" (default) or "cross_entropy"
+    #[serde(default = "default_loss")]
+    pub loss: String,
+    /// Classes per output cell. Sudoku = 9.
+    #[serde(default)]
+    pub classes: usize,
+    /// CSV stores class / value_scale. Your sudoku file: 9.0
+    #[serde(default = "default_scale")]
+    pub value_scale: f32,
+}
+
+fn default_loss() -> String { "mse".into() }
+fn default_scale() -> f32 { 1.0 }
+
+impl Default for TaskConfig {
+    fn default() -> Self {
+        Self { loss: default_loss(), classes: 0, value_scale: default_scale() }
+    }
+}
+
