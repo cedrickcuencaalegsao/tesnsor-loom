@@ -1,13 +1,21 @@
-import type { HiddenLayerConfig, LayerConfig } from "../types/type";
+import type {
+  HiddenLayerConfig,
+  LayerConfig,
+  LossKind,
+  TaskConfig,
+} from "../types/type";
 
 interface Props {
   value: LayerConfig;
   onChange: (value: LayerConfig) => void;
+  task: TaskConfig;
+  onTaskChange: (value: TaskConfig) => void;
 }
 
 const MAX_HIDDEN_LAYERS = 8;
 const HIDDEN_ACTIVATIONS = ["relu", "tanh", "sigmoid"] as const;
 const OUTPUT_ACTIVATIONS = ["none", "relu", "tanh", "sigmoid"] as const;
+const LOSS_OPTIONS = ["mse", "cross_entropy"] as const;
 
 function ActivationPicker({
   id,
@@ -51,7 +59,9 @@ function ActivationPicker({
   );
 }
 
-export function NetworkSection({ value, onChange }: Props) {
+export function NetworkSection({ value, onChange, task, onTaskChange }: Props) {
+  const isClassification = task.loss === "cross_entropy";
+
   const setHidden = (index: number, patch: Partial<HiddenLayerConfig>) => {
     const hidden_layers = value.hidden_layers.map((layer, i) =>
       i === index ? { ...layer, ...patch } : layer,
@@ -78,6 +88,28 @@ export function NetworkSection({ value, onChange }: Props) {
     });
   };
 
+  const setLoss = (loss: LossKind) => {
+    if (loss === task.loss) return;
+    if (loss === "cross_entropy") {
+      // Raw logits out of the network: softmax happens inside the loss.
+      onTaskChange({
+        loss,
+        classes: task.classes >= 2 ? task.classes : 9,
+        value_scale: task.value_scale > 1 ? task.value_scale : 9,
+      });
+      onChange({ ...value, output_activation: "none" });
+    } else {
+      onTaskChange({ loss, classes: 0, value_scale: 1 });
+    }
+  };
+
+  const networkIn = isClassification
+    ? value.in_features * (task.classes + 1)
+    : value.in_features;
+  const networkOut = isClassification
+    ? value.out_features * task.classes
+    : value.out_features;
+
   return (
     <section className="neo-raised h-full w-full p-6 sm:p-8">
       <header className="mb-6">
@@ -86,6 +118,71 @@ export function NetworkSection({ value, onChange }: Props) {
           Configure input, hidden, and output layers.
         </p>
       </header>
+
+      <div className="mb-6 space-y-3">
+        <ActivationPicker
+          id="loss-kind"
+          label="Task / loss"
+          options={LOSS_OPTIONS}
+          value={task.loss}
+          onChange={(next) => setLoss(next as LossKind)}
+        />
+        {isClassification ? (
+          <div className="neo-inset space-y-3 px-4 py-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="task-classes"
+                  className="block text-xs font-medium text-secondary"
+                >
+                  Classes per output
+                </label>
+                <input
+                  id="task-classes"
+                  type="number"
+                  min={2}
+                  step={1}
+                  required
+                  value={task.classes}
+                  onChange={(e) =>
+                    onTaskChange({ ...task, classes: Number(e.target.value) })
+                  }
+                  className="neo-field"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="task-scale"
+                  className="block text-xs font-medium text-secondary"
+                >
+                  Value scale
+                </label>
+                <input
+                  id="task-scale"
+                  type="number"
+                  min={0}
+                  step="any"
+                  required
+                  value={task.value_scale}
+                  onChange={(e) =>
+                    onTaskChange({ ...task, value_scale: Number(e.target.value) })
+                  }
+                  className="neo-field"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-secondary">
+              Each CSV value is class / scale (sudoku: 9 classes, scale 9; inputs use 0 for
+              blank, targets are 1 to 9). Inputs are one-hot encoded internally, so the
+              network is {networkIn} inputs to {networkOut} outputs.
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-secondary">
+            Mean squared error: predicts numbers (regression).
+          </p>
+        )}
+      </div>
 
       <div className="space-y-2">
         <label
@@ -216,13 +313,17 @@ export function NetworkSection({ value, onChange }: Props) {
           <ActivationPicker
             id="out-activation"
             label="Output activation"
-            options={OUTPUT_ACTIVATIONS}
+            options={isClassification ? ["none"] : OUTPUT_ACTIVATIONS}
             value={value.output_activation}
             onChange={(output_activation) =>
               onChange({ ...value, output_activation })
             }
           />
-          <p className="text-xs text-secondary">Use none for regression.</p>
+          <p className="text-xs text-secondary">
+            {isClassification
+              ? "Raw scores (logits): softmax is applied inside the loss."
+              : "Use none for regression."}
+          </p>
         </div>
       </div>
     </section>

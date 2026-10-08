@@ -9,11 +9,20 @@ interface Props {
   epochs: EpochRow[];
   log: string[];
   snapshot: NetworkSnapshot | null;
+  /** Column title for the validation score ("Score" for regression, "Cell accuracy" for classification). */
+  scoreLabel?: string;
 }
 
 const VISIBLE_ROWS = 15;
 
-export function ProgressPanel({ progress, status, epochs, log, snapshot }: Props) {
+export function ProgressPanel({
+  progress,
+  status,
+  epochs,
+  log,
+  snapshot,
+  scoreLabel = "Score",
+}: Props) {
   const pct = Math.round(Math.max(0, Math.min(1, progress)) * 100);
   const recent = epochs.slice(-VISIBLE_ROWS);
 
@@ -60,7 +69,7 @@ export function ProgressPanel({ progress, status, epochs, log, snapshot }: Props
               <tr>
                 <th>Epoch</th>
                 <th>Avg loss</th>
-                <th>Score</th>
+                <th>{scoreLabel}</th>
               </tr>
             </thead>
             <tbody>
